@@ -1,0 +1,9 @@
+.env
+.env.*
+__pycache__/
+.venv/
+out/
+*.zip
+x-posts.json
+private/
+.DS_Store

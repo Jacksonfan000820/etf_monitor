@@ -1,3 +1,26 @@
+# Market Intelligence：币圈、美股与 ETF
+
+本仓库在原 ETF Monitor 基础上扩展，仓库名暂保持 `etf_monitor`。原 ETF 数据库、HTML 报告、命令入口和测试保持不变，原使用说明完整保留在下方。
+
+## 综合情报模块
+
+新增独立目录 [`market-digest/`](market-digest/README.md)：ETF 资金流、RSS/Atom 原文摘录、授权 X 导出导入、人工指定的交易所公告证据和默认不发送的日报生成器。
+
+**当前是工程起点，不是已上线的完整产品。** X 自动监控、全站活动发现、完整美股/币圈新闻覆盖尚未实现；飞书真实端到端、候选新闻源与生产运行尚未验证。不会自动生成无来源的投资观点。
+
+```sh
+cd market-digest
+python -m pip install -r requirements.txt
+python -m unittest discover -s tests -v
+python digest.py
+```
+
+默认输出本地 `out/report.json`、`out/report.txt`。未添加定时采集或定时发送；已有 CI 仅增加离线测试。可选手动 dry-run workflow 保存在子目录文档中，不会自动激活。飞书凭据只从环境变量读取，不要提交真实 webhook、X 私有导出或运行报告。
+
+详见 [当前验证边界](market-digest/docs/VALIDATION.md)、[后续路线](market-digest/docs/ROADMAP.md) 和 [开发指南](AGENTS.md)。两套 ETF 解析暂独立保留，后续需在回归测试保障下统一，避免破坏原数据库与报告功能。
+
+## 原 ETF Monitor 使用说明
+
 # ETF Monitor — BTC/ETH ETF 资金流向监控
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)

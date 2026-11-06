@@ -14,3 +14,16 @@ jobs:
       - run: python -m pip install -r requirements.txt
       - run: python -m unittest -v
       - run: python -m py_compile etf_db.py flow_quality.py
+  digest-test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: market-digest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r requirements.txt
+      - run: python -m unittest discover -s tests -v
+      - run: python -m py_compile digest.py sources.py
