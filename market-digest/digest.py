@@ -13,6 +13,7 @@ from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 from sources import collect_feeds, import_x_posts
+from activities import collect_activities
 
 SOURCES = {'BTC': 'https://farside.co.uk/btc/', 'ETH': 'https://farside.co.uk/eth/'}
 OFFICIAL_HOSTS = {'www.binance.com', 'www.okx.com', 'announcements.bybit.com'}
@@ -100,6 +101,7 @@ def summarize(flows, sessions):
     return {'expected_session': str(expected), 'status': 'current' if latest == expected else 'stale',
             'latest_complete': str(latest), 'latest_total_musd': str(flows[latest].total),
             'five_session_dates': [str(d) for d in window],
+            'five_session_flows': [{'date': str(d), 'total_musd': str(flows[d].total) if d in flows and flows[d].complete else None} for d in window],
             'five_session_total_musd': str(sum(flows[d].total for d in window)) if valid else None,
             'missing_or_incomplete_sessions': [str(d) for d in sessions if d >= window[0] and (d not in flows or not flows[d].complete)]}
 
@@ -144,28 +146,90 @@ def collect_announcements(urls, fetcher=fetch):
             results.append({'url': url, 'status': 'unavailable'})
     return results
 
+def readable_time(value):
+    try:
+        dt = datetime.fromisoformat(value.replace('Z', '+00:00'))
+        if dt.tzinfo is None: return '时间未核实'
+        return dt.astimezone(BJ).strftime('%Y年%m月%d日 %H:%M')
+    except (ValueError, TypeError, AttributeError): return '时间未核实'
+
+
+def readable_flow(value):
+    amount = number(str(value)) if value is not None else None
+    if amount is None: return '数据不完整，暂不计算'
+    if amount == 0: return '净流量为零'
+    direction = '净流入' if amount > 0 else '净流出'
+    # Avoid presenting a small non-zero flow as 0.00 billion yuan/dollars.
+    magnitude = abs(amount) / Decimal('100')
+    digits = max(2, -magnitude.adjusted() + 1)
+    return f'{direction} {magnitude:.{digits}f} 亿美元'
+
+
 def render(report):
-    lines = [f"市场数据日报 | 北京时间 {report['generated_beijing']}", 'ETF 净流量单位：百万美元；交易日期为美国交易日。']
+    lines = [f"市场日报｜北京时间 {readable_time(report['generated_beijing'])}",
+             '一、比特币 / 以太坊现货 ETF', '金额为美元；下列日期均为美国交易日。']
+    statuses = {'current': '已更新', 'stale': '更新滞后', 'unavailable': '暂未获取到可靠数据'}
     for asset, data in report['etf'].items():
-        lines.append(f"{asset}: 状态 {data['status']}；最近完整日 {data.get('latest_complete') or '缺失'}；当日 {data.get('latest_total_musd', '缺失')}；5交易日合计 {data.get('five_session_total_musd') if data.get('five_session_total_musd') is not None else '缺失，不计算'}。")
-        lines.append(f"预期最近已收盘日 {data.get('expected_session', '无法核实')}；来源 {SOURCES[asset]}")
-    lines.append('交易所活动：仅收录配置的官方公告原文证据；不推断有效期、资格或收益。')
-    if not report['announcements']: lines.append('币安 / Bitget / OKX：尚未接入自动活动发现，今天无已核实活动可列出；不代表这些平台没有活动。')
-    for a in report['announcements']:
-        lines.append(f"{a['status']} | {a.get('title_quote', '无法获取')} | {a['url']}")
-        if a.get('description_quote'): lines.append('官方页面摘录：' + a['description_quote'])
+        lines.append(f"\n{asset}｜{statuses.get(data['status'], '待核实')}")
+        if data.get('latest_complete'):
+            lines.append(f"{data['latest_complete']}：{readable_flow(data.get('latest_total_musd'))}")
+            dates = data.get('five_session_dates', [])
+            window = f"（{dates[0]} 至 {dates[-1]}）" if dates else ''
+            lines.append(f"截至最近完整日的五交易日合计{window}：{readable_flow(data.get('five_session_total_musd'))}")
+            for day in data.get('five_session_flows', []):
+                lines.append(f"  {day['date']}：{readable_flow(day['total_musd'])}")
+        else:
+            lines.append('抓取、解析或交易日历校验未通过，本次不显示资金流数字。')
+        if data['status'] == 'stale':
+            lines.append(f"应更新至 {data.get('expected_session', '未知')}，最新完整数据尚未公布或未取得；以上不是最新交易日数据。")
+        lines.append(f"来源：{SOURCES[asset]}")
     news = report.get('news', {'sources': [], 'items': []})
-    lines.append('币圈 / 美股金融新闻：RSS 原文摘录，不是事实背书、实时行情或智能观点。')
-    for source in news['sources']:
-        lines.append(f"数据源 {source['source']}：{source['status']}，条目 {source.get('item_count', '未知')}")
-    for item in news['items']:
-        lines.append(f"[{item['category']}] {item['title_quote']} | 发布时间 {item['published_at'] or '未知'} | {item['url']}")
-        if item['description_quote']: lines.append('来源摘录：' + item['description_quote'][:220])
+    lines.append('\n二、美股 / 美国金融与币圈要闻')
+    lines.append(f"过去{news.get('lookback_hours', 72)}小时内来源标题摘录；中文来源优先，外文保留原文，不自动编译或推断。")
+    groups = [('美股 / 美国金融', {'us_stocks', 'macro'}), ('币圈', {'crypto', 'etf'})]
+    for label, categories in groups:
+        lines.append(f"\n{label}")
+        items = [item for item in news['items'] if item['category'] in categories and item.get('published_at')]
+        # Prefer available Chinese headlines; do not fill a short digest with unrelated English boilerplate.
+        chinese = [item for item in items if re.search(r'[\u4e00-\u9fff]', item['title_quote'])]
+        if chinese: items = chinese
+        # Bound the human digest, retaining all collected evidence in report.json.
+        items.sort(key=lambda item: (bool(re.search(r'[\u4e00-\u9fff]', item['title_quote'])), item['published_at']), reverse=True)
+        for item in items[:4]:
+            lines.append(f"• {item['title_quote']}")
+            lines.append(f"  {item['source']}｜北京时间 {readable_time(item['published_at'])}\n  {item['url']}")
+        if not items: lines.append('本次未取得有明确发布时间的可用新闻。')
+    failures = [s['source'] for s in news['sources'] if s['status'] != 'ok']
+    if failures: lines.append('抓取未成功：' + '、'.join(failures) + '。不代表没有相关新闻。')
+    undated = sum(not i.get('published_at') for i in news['items'])
+    if undated: lines.append(f'{undated} 条来源记录没有可核实发布时间，未列入要闻。')
+    lines.append('\n三、交易所活动')
+    activities = report.get('activities', {'sources': [], 'items': []})
+    lines.append('近七天官方列表线索，每所最多两条；不是可参加活动推荐。')
+    for source in activities['sources']:
+        label = {'Binance': '币安', 'OKX': 'OKX', 'Bitget': 'Bitget'}.get(source['source'], source['source'])
+        if source['status'] == 'not_integrated': lines.append(f"{label}：自动发现尚未接通。官方活动入口：{source['url']}")
+        elif source['status'] != 'ok': lines.append(f"{label}：本次官方活动列表抓取或解析失败。")
+        elif not source.get('item_count'): lines.append(f"{label}：已读取的列表首页没有近七天候选，不代表平台没有其他活动。")
+    for item in activities['items']:
+        language = '（英文原文）' if item.get('language') == 'en' else ''
+        lines.append(f"• {item['exchange']}{language}：{item['title_quote']}\n  公告发布：北京时间 {readable_time(item['published_at'])}\n  {item['url']}")
+    if not activities['sources'] and not report['announcements']:
+        lines.append('本次没有取得官方活动列表，不能据此判断平台是否有活动。')
+    lines.append('所有候选的截止时间、地区、KYC、投入门槛及奖励条件均未核实；不要把公告发布时间当作活动截止时间。')
+    for item in report['announcements']:
+        lines.append(f"• {item.get('title_quote', '官方公告暂时无法读取')}\n  {item['url']}")
+        if item.get('description_quote'): lines.append('  官方页面摘录：' + item['description_quote'][:300])
+        lines.append('  仅为公告线索；截止时间、地区、KYC、投入门槛与奖励条件未核实，不能据此认定你有参与资格。')
     social = report.get('x_posts', {'status': 'not_configured', 'items': []})
-    lines.append(f"马斯克 / X/KOL：{social['status']}；仅支持授权导出导入，未实现自动抓取或智能观点，导入真实性未独立验证。")
-    for item in social['items']:
-        lines.append(f"{item['author']} | {item['published_at']} | {item['text_quote']} | {item['url']}")
-    lines.append('数据缺失不代表资金流为零；非投资建议。')
+    lines.append('\n四、马斯克 / X 动态')
+    if not social['items']:
+        lines.append('尚未接入可核验的 X 原帖自动监测，本次无可展示原帖；不代表马斯克没有发帖。')
+    else:
+        lines.append('以下来自授权导出，原文真实性尚未独立核实：')
+        for item in social['items'][:3]:
+            lines.append(f"{item['author']}｜北京时间 {readable_time(item['published_at'])}\n{item['text_quote'][:500]}\n{item['url']}")
+    lines.append('\n数据缺失不等于资金流为零；新闻摘录不代表事实已交叉核实。非投资建议。')
     return '\n'.join(lines)
 
 def send_feishu(text):
@@ -215,6 +279,7 @@ def main():
     if not isinstance(urls, list) or len(urls) > 100 or not all(isinstance(u, str) for u in urls):
         raise ValueError('announcements must be a JSON array of at most 100 URLs')
     report['announcements'] = collect_announcements(urls)
+    report['activities'] = collect_activities(now, fetch)
     output = Path(args.output); output.mkdir(parents=True, exist_ok=True)
     (output/'report.json').write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')
     content = render(report); (output/'report.txt').write_text(content, encoding='utf-8')

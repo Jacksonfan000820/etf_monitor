@@ -11,7 +11,7 @@ import re
 from urllib.parse import urlsplit, urlunsplit
 import xml.etree.ElementTree as ET
 
-ALLOWED_FEED_HOSTS = {'www.federalreserve.gov', 'www.sec.gov', 'www.coindesk.com'}
+ALLOWED_FEED_HOSTS = {'www.federalreserve.gov', 'www.sec.gov', 'www.coindesk.com', 'feed.wallstreetcn.com', 'www.blocktempo.com'}
 CATEGORIES = {'crypto', 'us_stocks', 'macro', 'etf'}
 
 
@@ -75,6 +75,8 @@ def parse_feed(xml, source, now, limit=15, lookback_hours=72):
         try: url = public_url(url)
         except ValueError: continue
         if not title or url in seen: continue
+        keywords = source.get('title_keywords', [])
+        if keywords and not any(word.casefold() in title.casefold() for word in keywords): continue
         seen.add(url)
         dt = timestamp(child_text(node, {'pubDate', 'published', 'updated', 'date'}))
         status = freshness(dt, now, lookback_hours)
@@ -105,6 +107,9 @@ def collect_feeds(config, now, fetcher):
             if not source.get('enabled', True): continue
             name = clean(source.get('name', 'unnamed'), 100)
             if source.get('category') not in CATEGORIES: raise ValueError('invalid category')
+            keywords = source.get('title_keywords', [])
+            if not isinstance(keywords, list) or len(keywords) > 50 or not all(isinstance(w, str) and 0 < len(w) <= 50 for w in keywords):
+                raise ValueError('invalid title keywords')
             url = public_url(source['url'], ALLOWED_FEED_HOSTS)
             records = parse_feed(fetcher(url, ALLOWED_FEED_HOSTS), source, now,
                                  limit=limit, lookback_hours=lookback)
@@ -114,7 +119,7 @@ def collect_feeds(config, now, fetcher):
         except Exception:
             reports.append({'source': name, 'status': 'unavailable',
                             'reason': 'fetch, allowlist or feed schema validation failed'})
-    return {'sources': reports, 'items': items}
+    return {'sources': reports, 'items': items, 'lookback_hours': lookback}
 
 
 def import_x_posts(path, now, lookback_hours=72):
@@ -143,3 +148,4 @@ def import_x_posts(path, now, lookback_hours=72):
                           'evidence_type': 'user_supplied_export', 'authenticity': 'not_independently_verified'})
         except (KeyError, TypeError, ValueError, AttributeError): rejected += 1
     return {'status': 'imported', 'items': items, 'rejected_records': rejected}
+

@@ -3,6 +3,38 @@
   "max_items_per_source": 3,
   "feeds": [
     {
+      "name": "华尔街见闻（中文）",
+      "category": "us_stocks",
+      "url": "https://feed.wallstreetcn.com/wallstreetcn/news/global",
+      "enabled": true,
+      "title_keywords": [
+        "美国",
+        "美股",
+        "美联储",
+        "非农",
+        "纳指",
+        "标普",
+        "道指",
+        "美债",
+        "美元",
+        "特斯拉",
+        "英伟达",
+        "苹果",
+        "微软",
+        "亚马逊",
+        "谷歌",
+        "通胀",
+        "降息",
+        "加息"
+      ]
+    },
+    {
+      "name": "動區動趨（繁体中文）",
+      "category": "crypto",
+      "url": "https://www.blocktempo.com/feed/",
+      "enabled": true
+    },
+    {
       "name": "Federal Reserve press releases",
       "category": "macro",
       "url": "https://www.federalreserve.gov/feeds/press_all.xml",
