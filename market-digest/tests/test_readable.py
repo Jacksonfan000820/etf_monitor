@@ -37,10 +37,41 @@ class ReadableTests(unittest.TestCase):
         report={'generated_beijing':'2026-11-07T01:00:00+08:00','etf':{},'announcements':[], 'news':{'sources':[], 'items':[{'category':'crypto','published_at':None,'title_quote':'未知日期标题'}]}}
         text=render(report)
         self.assertNotIn('未知日期标题',text)
-        self.assertIn('1 条来源记录没有',text)
+        self.assertIn('暂无可核实的简短中文要点',text)
 
     def test_chinese_headlines_do_not_get_english_filler(self):
         news = [{'category':'us_stocks','published_at':'2026-11-06T12:00:00+00:00', 'title_quote':title, 'source':'fixture', 'url':'https://example.com'} for title in ['美国就业新闻', 'English regulatory boilerplate']]
         text = render({'generated_beijing':'2026-11-07T01:00:00+08:00','etf':{},'announcements':[], 'news':{'sources':[],'items':news}})
         self.assertIn('美国就业新闻',text)
         self.assertNotIn('English regulatory boilerplate',text)
+
+    def test_no_original_text_or_publication_records(self):
+        report = {'generated_beijing':'2026-11-07T01:00:00+08:00', 'etf':{}, 'announcements':[{'status':'candidate_only','title_quote':'活动奖励待领取','description_quote':'不要展示的公告原文','url':'https://example.com/activity'}], 'x_posts':{'items':[{'text_quote':'不要展示的帖子原文'}]}, 'news':{'sources':[], 'items':[{'category':'crypto','published_at':'2026-11-06T12:34:00+00:00','title_quote':'比特币出现波动','description_quote':'不要展示的新闻原文','source':'不要展示的发布记录','url':'https://example.com/news'}]}}
+        text = render(report)
+        for raw in ['不要展示', '20:34', '公告发布', '原文摘录']:
+            self.assertNotIn(raw,text)
+        self.assertIn('https://example.com/news',text)
+        self.assertIn('KYC',text)
+    def test_preserves_uncertainty_and_numbers(self):
+        from digest import key_point
+        self.assertEqual(key_point({'title_quote':'据报道，某公司可能融资约12亿美元'}),'据报道，某公司可能融资约12亿美元')
+    def test_foreign_and_long_headlines_not_summarized_blindly(self):
+        from digest import key_point
+        self.assertIsNone(key_point({'title_quote':'Unverified English statement'}))
+        self.assertIsNone(key_point({'title_quote':'中文'*61}))
+    def test_relevance_bounded_and_deduplicated(self):
+        from digest import select_key_news
+        rows=[{'category':'macro','published_at':'2026-11-06','title_quote':t} for t in ['闲谈新闻','美国非农公布','美国非农公布','美联储维持利率']]
+        selected=select_key_news(rows,{'macro'})
+        self.assertEqual(len(selected),2)
+        self.assertEqual([i['title_quote'] for i in selected],['美国非农公布','美联储维持利率'])
+    def test_etf_daily_ledger_not_in_message(self):
+        report={'generated_beijing':'2026-11-07T01:00:00+08:00','etf':{'BTC':{'status':'current','latest_complete':'2026-11-05','latest_total_musd':'100','five_session_total_musd':'200','five_session_flows':[{'date':'2026-10-30','total_musd':'123'}]}},'announcements':[]}
+        text=render(report)
+        self.assertIn('近5交易日合计净流入 2.00 亿美元',text)
+        self.assertNotIn('2026-10-30',text)
+
+    def test_crypto_feed_macro_duplicates_are_not_crypto_points(self):
+        from digest import select_key_news
+        rows=[{'category':'crypto','published_at':'2026-11-06','title_quote':t} for t in ['美国非农公布','比特币出现波动']]
+        self.assertEqual([i['title_quote'] for i in select_key_news(rows,{'crypto','etf'})],['比特币出现波动'])

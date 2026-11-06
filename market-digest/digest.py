@@ -165,71 +165,94 @@ def readable_flow(value):
     return f'{direction} {magnitude:.{digits}f} 亿美元'
 
 
+def key_point(item):
+    """Use only short Chinese source headlines; never invent a translation or interpretation.
+
+    Retain qualifiers and numbers intact. Long/foreign text stays in evidence JSON,
+    not the short digest. Descriptions and full social posts are never rendered.
+    """
+    text = ' '.join(item.get('title_quote', '').split())
+    if not re.search(r'[\u4e00-\u9fff]', text) or len(text) > 120:
+        return None
+    return text
+
+
+def select_key_news(items, categories, limit=2):
+    # Transparent keyword relevance, not an assertion of market impact.
+    priority = ('非农', '非農', '美联储', '美聯儲', '利率', '通胀', '通膨',
+                '暂停', '暫停', '被盗', '被盜', '駭客', '黑客', '破产', '破產',
+                'ETF', '比特币', '比特幣', '以太坊', '财报', '財報')
+    eligible = [i for i in items if i.get('category') in categories and i.get('published_at') and key_point(i)]
+    if categories <= {'crypto', 'etf'}:
+        crypto_terms = ('币', '幣', '链', '鏈', 'ETF', 'Bitcoin', 'Ethereum', 'BTC', 'ETH', 'Solana', 'USDT', 'USDC', 'DeFi')
+        eligible = [i for i in eligible if any(term.casefold() in i['title_quote'].casefold() for term in crypto_terms)]
+    eligible.sort(key=lambda i: (any(word in i['title_quote'] for word in priority), i['published_at']), reverse=True)
+    selected, seen = [], set()
+    for item in eligible:
+        text = key_point(item)
+        if text in seen: continue
+        seen.add(text); selected.append(item)
+        if len(selected) == limit: break
+    return selected
+
+
 def render(report):
-    lines = [f"市场日报｜北京时间 {readable_time(report['generated_beijing'])}",
-             '一、比特币 / 以太坊现货 ETF', '金额为美元；下列日期均为美国交易日。']
-    statuses = {'current': '已更新', 'stale': '更新滞后', 'unavailable': '暂未获取到可靠数据'}
+    links = []
+    def reference(url):
+        if url not in links: links.append(url)
+        return f"[{links.index(url) + 1}]"
+    lines = [f"市场要点｜北京时间 {readable_time(report['generated_beijing'])}", '\nETF 资金流（美国交易日）']
     for asset, data in report['etf'].items():
-        lines.append(f"\n{asset}｜{statuses.get(data['status'], '待核实')}")
         if data.get('latest_complete'):
-            lines.append(f"{data['latest_complete']}：{readable_flow(data.get('latest_total_musd'))}")
-            dates = data.get('five_session_dates', [])
-            window = f"（{dates[0]} 至 {dates[-1]}）" if dates else ''
-            lines.append(f"截至最近完整日的五交易日合计{window}：{readable_flow(data.get('five_session_total_musd'))}")
-            for day in data.get('five_session_flows', []):
-                lines.append(f"  {day['date']}：{readable_flow(day['total_musd'])}")
+            lines.append(f"• {asset} {data['latest_complete']}：{readable_flow(data.get('latest_total_musd'))}；截至该日近5交易日合计{readable_flow(data.get('five_session_total_musd'))}。{reference(SOURCES[asset])}")
         else:
-            lines.append('抓取、解析或交易日历校验未通过，本次不显示资金流数字。')
+            lines.append(f"• {asset}：数据暂缺，不按零计算。")
         if data['status'] == 'stale':
-            lines.append(f"应更新至 {data.get('expected_session', '未知')}，最新完整数据尚未公布或未取得；以上不是最新交易日数据。")
-        lines.append(f"来源：{SOURCES[asset]}")
+            lines.append(f"  更新滞后，应至 {data.get('expected_session', '未知')}；以上不是最新交易日数据。")
     news = report.get('news', {'sources': [], 'items': []})
-    lines.append('\n二、美股 / 美国金融与币圈要闻')
-    lines.append(f"过去{news.get('lookback_hours', 72)}小时内来源标题摘录；中文来源优先，外文保留原文，不自动编译或推断。")
-    groups = [('美股 / 美国金融', {'us_stocks', 'macro'}), ('币圈', {'crypto', 'etf'})]
-    for label, categories in groups:
-        lines.append(f"\n{label}")
-        items = [item for item in news['items'] if item['category'] in categories and item.get('published_at')]
-        # Prefer available Chinese headlines; do not fill a short digest with unrelated English boilerplate.
-        chinese = [item for item in items if re.search(r'[\u4e00-\u9fff]', item['title_quote'])]
-        if chinese: items = chinese
-        # Bound the human digest, retaining all collected evidence in report.json.
-        items.sort(key=lambda item: (bool(re.search(r'[\u4e00-\u9fff]', item['title_quote'])), item['published_at']), reverse=True)
-        for item in items[:4]:
-            lines.append(f"• {item['title_quote']}")
-            lines.append(f"  {item['source']}｜北京时间 {readable_time(item['published_at'])}\n  {item['url']}")
-        if not items: lines.append('本次未取得有明确发布时间的可用新闻。')
-    failures = [s['source'] for s in news['sources'] if s['status'] != 'ok']
-    if failures: lines.append('抓取未成功：' + '、'.join(failures) + '。不代表没有相关新闻。')
-    undated = sum(not i.get('published_at') for i in news['items'])
-    if undated: lines.append(f'{undated} 条来源记录没有可核实发布时间，未列入要闻。')
-    lines.append('\n三、交易所活动')
+    lines.append(f"\n市场重点（近{news.get('lookback_hours', 72)}小时）")
+    shown = set()
+    for label, categories in [('美股 / 宏观', {'us_stocks', 'macro'}), ('币圈', {'crypto', 'etf'})]:
+        items = select_key_news(news['items'], categories)
+        for item in items:
+            if item['url'] in shown: continue
+            shown.add(item['url'])
+            lines.append(f"• {label}：{key_point(item)} {reference(item['url'])}")
+        if not items: lines.append(f"• {label}：暂无可核实的简短中文要点。")
+    lines.append('\n活动提醒')
     activities = report.get('activities', {'sources': [], 'items': []})
-    lines.append('近七天官方列表线索，每所最多两条；不是可参加活动推荐。')
-    for source in activities['sources']:
-        label = {'Binance': '币安', 'OKX': 'OKX', 'Bitget': 'Bitget'}.get(source['source'], source['source'])
-        if source['status'] == 'not_integrated': lines.append(f"{label}：自动发现尚未接通。官方活动入口：{source['url']}")
-        elif source['status'] != 'ok': lines.append(f"{label}：本次官方活动列表抓取或解析失败。")
-        elif not source.get('item_count'): lines.append(f"{label}：已读取的列表首页没有近七天候选，不代表平台没有其他活动。")
+    by_exchange = {}
     for item in activities['items']:
-        language = '（英文原文）' if item.get('language') == 'en' else ''
-        lines.append(f"• {item['exchange']}{language}：{item['title_quote']}\n  公告发布：北京时间 {readable_time(item['published_at'])}\n  {item['url']}")
-    if not activities['sources'] and not report['announcements']:
-        lines.append('本次没有取得官方活动列表，不能据此判断平台是否有活动。')
-    lines.append('所有候选的截止时间、地区、KYC、投入门槛及奖励条件均未核实；不要把公告发布时间当作活动截止时间。')
-    for item in report['announcements']:
-        lines.append(f"• {item.get('title_quote', '官方公告暂时无法读取')}\n  {item['url']}")
-        if item.get('description_quote'): lines.append('  官方页面摘录：' + item['description_quote'][:300])
-        lines.append('  仅为公告线索；截止时间、地区、KYC、投入门槛与奖励条件未核实，不能据此认定你有参与资格。')
+        by_exchange.setdefault(item['exchange'], []).append(item)
+    for exchange, items in by_exchange.items():
+        label = '币安' if exchange == 'Binance' else exchange
+        candidate = next((i for i in items if key_point(i)), None)
+        if candidate:
+            lines.append(f"• {label}：{key_point(candidate)} {reference(candidate['url'])}")
+        else:
+            # Do not reproduce untranslated originals or invent a summary of them.
+            lines.append(f"• {label}：发现新活动线索，细则待核实。{reference(items[0]['url'])}")
+    for item in report.get('announcements', [])[:2]:
+        if item.get('status') == 'candidate_only' and key_point(item):
+            lines.append(f"• {key_point(item)} {reference(item['url'])}")
+    if not activities['items'] and not report.get('announcements'):
+        lines.append('• 暂无可核实活动线索。')
+    lines.append('活动仅查近7天列表：期限、地区、KYC、投入及奖励条件未核实，先核对再参与。')
     social = report.get('x_posts', {'status': 'not_configured', 'items': []})
-    lines.append('\n四、马斯克 / X 动态')
-    if not social['items']:
-        lines.append('尚未接入可核验的 X 原帖自动监测，本次无可展示原帖；不代表马斯克没有发帖。')
+    # Unverified exports are not promoted into factual key points or reposted.
+    if social['items']:
+        lines.append('\n马斯克 / X：导出内容尚未核验，暂不生成观点要点。')
     else:
-        lines.append('以下来自授权导出，原文真实性尚未独立核实：')
-        for item in social['items'][:3]:
-            lines.append(f"{item['author']}｜北京时间 {readable_time(item['published_at'])}\n{item['text_quote'][:500]}\n{item['url']}")
-    lines.append('\n数据缺失不等于资金流为零；新闻摘录不代表事实已交叉核实。非投资建议。')
+        lines.append('\n马斯克 / X：自动监测未接通，不代表马斯克没有发帖。')
+    gaps = []
+    if any(s['status'] != 'ok' for s in news['sources']): gaps.append('部分新闻源未取得')
+    for source in activities['sources']:
+        if source['status'] != 'ok': gaps.append(('币安' if source['source'] == 'Binance' else source['source']) + '活动未接通或未取得')
+    if gaps: lines.append('覆盖缺口：' + '；'.join(gaps) + '。')
+    if links:
+        lines.append('\n来源')
+        lines.extend(f"[{index}] {url}" for index, url in enumerate(links, 1))
+    lines.append('\n消息尚未逐项交叉核实；非投资建议。')
     return '\n'.join(lines)
 
 def send_feishu(text):
