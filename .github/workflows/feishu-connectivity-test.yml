@@ -1,0 +1,66 @@
+name: Feishu connectivity test
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_send:
+        description: "Send one test message to the configured Feishu bot"
+        required: true
+        default: false
+        type: boolean
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/feishu-connectivity-test.yml
+
+permissions: {}
+
+concurrency:
+  group: feishu-connectivity-test
+  cancel-in-progress: false
+
+jobs:
+  send-one-test:
+    if: >-
+      github.run_attempt == 1 &&
+      ((github.event_name == 'workflow_dispatch' && inputs.confirm_send) ||
+      (github.event_name == 'push' && github.run_number == 1 &&
+       github.event.head_commit.message == 'Send authorized one-time Feishu connectivity test'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Send one test without retries or secret logging
+        env:
+          FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
+        shell: python
+        run: |
+          import json
+          import os
+          import sys
+          import urllib.error
+          import urllib.parse
+          import urllib.request
+          
+          url = os.environ.get("FEISHU_WEBHOOK_URL", "").strip()
+          parsed = urllib.parse.urlsplit(url)
+          if parsed.scheme != "https" or parsed.hostname != "open.feishu.cn" or not parsed.path.startswith("/open-apis/bot/v2/hook/") or parsed.username or parsed.password or parsed.query or parsed.fragment:
+              sys.exit("Missing or invalid Feishu webhook configuration; nothing sent.")
+          
+          class NoRedirect(urllib.request.HTTPRedirectHandler):
+              def redirect_request(self, req, fp, code, msg, headers, newurl):
+                  return None
+          
+          payload = {
+              "msg_type": "text",
+              "content": {"text": "飞书连通性测试｜Market Intelligence\n这是一条用户授权的测试消息，不是正式日报。\n币圈、美股与 ETF 完整日报尚未上线，定时推送尚未启用。"}
+          }
+          request = urllib.request.Request(url, data=json.dumps(payload, ensure_ascii=False).encode("utf-8"), headers={"Content-Type": "application/json"}, method="POST")
+          try:
+              with urllib.request.build_opener(NoRedirect).open(request, timeout=20) as response:
+                  result = json.loads(response.read(65536))
+          except Exception:
+              sys.exit("Delivery not confirmed. No retry performed; check the Feishu group before retrying.")
+          code = result.get("code", result.get("StatusCode"))
+          if type(code) is not int or code != 0:
+              sys.exit("Feishu did not confirm success. Check bot security requirements; no retry performed.")
+          print("Feishu API accepted the single test message (code 0). Recipient visibility has not been verified.")
