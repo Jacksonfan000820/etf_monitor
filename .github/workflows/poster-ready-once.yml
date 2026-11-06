@@ -1,0 +1,54 @@
+name: Poster ready one-time notification
+
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/poster-ready-once.yml]
+
+permissions: {}
+
+concurrency:
+  group: poster-ready-once
+  cancel-in-progress: false
+
+jobs:
+  notify:
+    if: >-
+      github.event_name == 'push' &&
+      github.run_number == 1 &&
+      github.run_attempt == 1 &&
+      github.event.head_commit.message == 'Send authorized one-time poster ready notification'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Send once without retries or secret logging
+        env:
+          FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
+        shell: python
+        run: |
+          import json
+          import os
+          import sys
+          import urllib.parse
+          import urllib.request
+
+          url = os.environ.get("FEISHU_WEBHOOK_URL", "").strip()
+          parsed = urllib.parse.urlsplit(url)
+          if parsed.scheme != "https" or parsed.hostname != "open.feishu.cn" or not parsed.path.startswith("/open-apis/bot/v2/hook/") or parsed.username or parsed.password or parsed.query or parsed.fragment:
+              sys.exit("Invalid webhook configuration; nothing sent.")
+
+          class NoRedirect(urllib.request.HTTPRedirectHandler):
+              def redirect_request(self, req, fp, code, msg, headers, newurl):
+                  return None
+
+          payload = {"msg_type": "text", "content": {"text": "海报文件已检查完成，请回对话查收；原人像分辨率有限。"}}
+          request = urllib.request.Request(url, data=json.dumps(payload, ensure_ascii=False).encode("utf-8"), headers={"Content-Type": "application/json"}, method="POST")
+          try:
+              with urllib.request.build_opener(NoRedirect).open(request, timeout=20) as response:
+                  result = json.loads(response.read(65536))
+          except Exception:
+              sys.exit("Delivery uncertain. No retry performed; check Feishu before any further action.")
+          code = result.get("code", result.get("StatusCode"))
+          if type(code) is not int or code != 0:
+              sys.exit("Feishu did not confirm success. No retry performed.")
+          print("Feishu API accepted the single poster notification (code 0). Recipient visibility has not been verified.")
