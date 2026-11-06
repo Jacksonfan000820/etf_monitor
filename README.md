@@ -1,132 +1,116 @@
-# Market Intelligence：币圈、美股与 ETF
+# Market Intelligence
 
-本仓库在原 ETF Monitor 基础上扩展，仓库名暂保持 `etf_monitor`。原 ETF 数据库、HTML 报告、命令入口和测试保持不变，原使用说明完整保留在下方。
+**以来源证据为基础的市场观察工具：BTC/ETH 现货 ETF 资金流、新闻摘录与本地日报。**
 
-## 综合情报模块
+[![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12-blue.svg)](https://www.python.org/)
 
-新增独立目录 [`market-digest/`](market-digest/README.md)：ETF 资金流、RSS/Atom 原文摘录、授权 X 导出导入、人工指定的交易所公告证据和默认不发送的日报生成器。
+从 ETF Monitor 扩展而来，保留原有数据库、HTML/SVG 报告和命令入口。当前是可测试的工程项目，不是全市场金融数据服务，也不是投资建议或自动交易系统。
 
-**当前是工程起点，不是已上线的完整产品。** X 自动监控、全站活动发现、完整美股/币圈新闻覆盖尚未实现；飞书真实端到端、候选新闻源与生产运行尚未验证。不会自动生成无来源的投资观点。
+## 能做什么
+
+| 模块 | 当前实现 | 边界 |
+| --- | --- | --- |
+| ETF Monitor | Farside BTC/ETH 资金流、SQLite、HTML 趋势图、价格及情绪指标、可选截图 | 数据延迟、缺报和源站改版都可能影响结果 |
+| Market Digest | ETF 摘要、配置的 RSS/Atom 摘录、人工指定官方公告证据 | 不是全网新闻或交易所活动发现器 |
+| X/KOL | 导入明确提供且有权使用的 JSON 导出 | 没有 X 自动监控、登录或 API 接入 |
+| 输出 | 本地 JSON / 文本日报；可选飞书发送接口 | 默认不发送；真实投递与定时以部署验收为准 |
+
+新闻标题和描述是来源摘录，不代表独立核实的事实。美股/美国金融方向目前以 Fed、SEC 等候选新闻源为起点，不覆盖所有个股。数据源失败必须显示 unavailable / stale / pending，不能用零或编造数据补齐。
+
+## 30 秒离线预览
+
+Python 3.11 或 3.12，无需安装第三方依赖：
+
+```sh
+python scripts/offline_demo.py
+```
+
+使用已纳入版本管理的历史 HTML 样本，输出标有 `historical_fixture_only` 的 JSON。**不联网、不写数据库、不发送消息，也不代表最新行情。** 可从任意工作目录运行。
+
+## 安装与验证
+
+先克隆本仓库并进入根目录，再执行：
+
+```sh
+python -m venv .venv
+# macOS / Linux
+. .venv/bin/activate
+# Windows PowerShell: .venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt -r market-digest/requirements.txt
+python scripts/check.py
+```
+
+统一检查入口运行根目录测试、digest 测试和 Python 编译检查；缺少日历等测试依赖时明确失败，避免把跳过日历测试误认为完整验证。各阶段失败后仍继续其他检查，最终返回非零退出码。测试使用 fixtures / mock，不发送真实消息。
+
+Playwright 浏览器只在需要 ETF 截图时安装：
+
+```sh
+python -m playwright install chromium
+```
+
+## 运行 ETF Monitor
+
+```sh
+python etf_db.py
+```
+
+该命令会联网读取 Farside、CoinGecko 和 Alternative.me，并更新根目录的 `etf_flows.db`。HTML 写入 `/tmp/etf_db_YYYYMMDD_HHMM.html`，截图可用时写入同名 PNG。截图失败仍保留 HTML；根 CLI 的 `/tmp` 输出目前面向 Linux/macOS，Windows 请使用 WSL。
+
+- 资金流单位：百万美元。空白、破折号和缺列是 SQL NULL，真实零值是 0。
+- 根据 ticker 表头解析；未知列、错误行宽、冲突日期和不一致总额会拒绝更新。
+- 五交易日窗口按 NYSE 已收盘交易日计算，考虑节假日、夏令时与提前收盘。缺任一天不计算窗口净额。
+- 查询时间为北京时间，抓取时间为 UTC，源日期为美国交易日。
+- SQLite 更新采用新增列兼容旧库，不删除原有记录。旧版本的假零/错列无法自动恢复，源页面之外的历史需另行核对。
+- 累计图只加总已知值，不应视为完整全历史；价格失败或陈旧需按报告状态解读。
+
+数据库包括 `btc_flows`、`eth_flows`、`prices`；ETF 表按日期去重，保留各 ticker、total 与 fetched_at。完整字段由 `etf_db.py` 中的 `BTC_COLS` / `ETH_COLS` 和迁移逻辑维护，避免文档表格滞后。
+
+## 运行 Market Digest
 
 ```sh
 cd market-digest
-python -m pip install -r requirements.txt
-python -m unittest discover -s tests -v
 python digest.py
 ```
 
-默认输出本地 `out/report.json`、`out/report.txt`。未添加定时采集或定时发送；已有 CI 仅增加离线测试。可选手动 dry-run workflow 保存在子目录文档中，不会自动激活。飞书凭据只从环境变量读取，不要提交真实 webhook、X 私有导出或运行报告。
+默认会联网采集已配置来源，只写 `out/report.json` 与 `out/report.txt`，不发送。**dry run 指不发送，不代表离线。**
 
-详见 [当前验证边界](market-digest/docs/VALIDATION.md)、[后续路线](market-digest/docs/ROADMAP.md) 和 [开发指南](AGENTS.md)。两套 ETF 解析暂独立保留，后续需在回归测试保障下统一，避免破坏原数据库与报告功能。
-
-## 原 ETF Monitor 使用说明
-
-# ETF Monitor — BTC/ETH ETF 资金流向监控
-
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Python 3.9+](https://img.shields.io/badge/Python-3.9%2B-green.svg)](https://www.python.org/)
-
-每日自动抓取 BTC/ETH 现货 ETF 资金流向数据，存入 SQLite 数据库，生成带趋势图表的 HTML 报告。
-
-## ✨ 功能
-
-- 📡 从 [Farside Investors](https://farside.co.uk/) 抓取 BTC/ETH ETF 每日资金流
-- 💰 获取 BTC/ETH 实时价格（CoinGecko）和恐慌贪婪指数（Alternative.me）
-- 🗄️ SQLite 本地持久化存储，自动去重
-- 📊 生成带 SVG 图表的 HTML 报告（每日柱状图 + 累计趋势线 + 各ETF明细）
-- 📸 Playwright 自动截图（可选）
-
-## 📦 安装
-
-```bash
-git clone https://github.com/Jacksonfan000820/etf_monitor.git
-cd etf_monitor
-pip install -r requirements.txt
-playwright install chromium
+```sh
+python digest.py --sources sources.json --announcements announcements.json --output out
+python digest.py --x-posts /your/private/path/x-posts.json
 ```
 
-## 🚀 使用
+配置、导入格式和发送约束详见 [模块说明](market-digest/README.md)。凭据只通过环境变量或 GitHub Actions Secrets 提供，不放在代码、命令参数、日志或公共 issue 中。不要为测试调用真实发送接口。
 
-```bash
-python3 etf_db.py
+## 项目结构
+
+```text
+etf_db.py                 ETF 数据库、价格、HTML 报告与截图入口
+flow_quality.py           ETF 解析与交易日质量判断
+fixtures/                 历史源表回归样本
+market-digest/            独立日报模块、源配置、测试与路线图
+scripts/check.py          两套测试与编译统一入口
+scripts/offline_demo.py   不联网的历史样本预览
+test_etf.py               ETF 回归测试
+test_scripts.py           维护脚本与离线边界测试
+docs/                    架构、运行维护、贡献与安全指南
+.github/workflows/       以实际 YAML 为准的 GitHub Actions 配置
 ```
 
-输出：
-- `etf_flows.db` — SQLite 数据库（自动创建）
-- `/tmp/etf_db_YYYYMMDD_HHMM.html` — HTML 报告
-- `/tmp/etf_db_YYYYMMDD_HHMM.png` — 截图（可选）
+保持两个入口独立是为了保护原有 ETF 使用方式。两套解析实现尚未统一，不应在缺少兼容性回归时直接替换。
 
-### 定时运行（crontab）
+## 运行与维护
 
-```bash
-# 服务器 cron 时区应为 Asia/Shanghai；数据分批更新，不保证10点已齐全
-0 10 * * * cd /path/to/etf_monitor && python3 etf_db.py
-```
+- [运行手册](docs/OPERATIONS.md)：运行前检查、数据状态、故障排查、备份和发布。
+- [贡献指南](docs/CONTRIBUTING.md)：开发约定、测试、变更说明与提交流程。
+- [安全说明](docs/SECURITY.md)：敏感数据、源站边界与漏洞报告。
+- [架构说明](docs/ARCHITECTURE.md)：模块边界、数据流与剩余风险。
+- [后续路线](market-digest/docs/ROADMAP.md) / [验证边界](market-digest/docs/VALIDATION.md)：区分已实现、未验证与待做事项。
 
-## 📊 报告预览
+离线检查通过不等于线上源可用、投递成功或定时任务已启用。不要仅凭 workflow 存在或任务显示绿色就宣称数据完整。发布应记录具体提交、测试结果、实时来源验证与实际部署状态。
 
-![报告示例](screenshots/report.png)
+## 数据来源与许可
 
-报告包含：
-- BTC/ETH 实时价格 + 恐慌贪婪指数
-- BTC ETF 每日净流入柱状图
-- BTC ETF 累计资金流趋势线
-- 各 ETF 累计统计表
-- 最近 7 个已存储交易日明细表及最近 5 个已收盘美国交易日统计
+ETF 来源 [Farside Investors](https://farside.co.uk/)，价格来源 [CoinGecko](https://www.coingecko.com/)，情绪来源 [Alternative.me](https://alternative.me/)。新闻和公告保留原文链接。使用者需遵守各来源的许可、频率和访问限制，不绕过登录、付费墙或反爬限制。
 
-## 🗄️ 数据库结构
-
-### btc_flows
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| date | TEXT | 交易日期 (YYYY-MM-DD) |
-| IBIT, FBTC, GBTC, ARKB, BITB, HODL, BRRR, BTCW, EZBC, BTCO, BTC, DEFI, MSBT | REAL | 各 ETF 净流（百万美元） |
-| total | REAL | 当日总计 |
-| fetched_at | TEXT | 抓取时间戳 |
-
-### eth_flows
-| 字段 | 类型 |
-|------|------|
-| ETHA, ETHB, FETH, ETHW, TETH, ETHV, QETH, EZET, ETHE, ETH, MSSE | REAL |
-
-### prices
-| 字段 | 类型 |
-|------|------|
-| btc_price, eth_price | REAL |
-| fear_greed | INTEGER |
-
-## 📡 数据来源
-
-- [Farside Investors](https://farside.co.uk/) — ETF 资金流数据（使用 curl_cffi HTTP 客户端）
-- [CoinGecko](https://www.coingecko.com/) — BTC/ETH 实时价格
-- [Alternative.me](https://alternative.me/) — 恐慌贪婪指数
-
-## ⚠️ 注意事项
-
-- Farside 数据分批发布，查询时间不代表所有基金已经报齐；请检查报告中的美国交易日及缺报日期。
-- CoinGecko 公开 API 偶发超时，脚本内置 3 次重试
-- 数据库文件 `etf_flows.db` 不会被 Git 追踪（已加入 .gitignore）
-
-## 📄 License
-
-MIT © Jackson Fan
-
-
-## 数据质量与测试
-
-- 空白、破折号、缺列保存为 SQL NULL；数字 0 是真实零值。缺失基金时总额视为待更新。
-- 按源表的 ticker 表头映射，不按固定位置猜测。无法识别表头、新增未知 ticker、错误行宽、冲突日期、非有限数字及明显不一致的总额会拒绝本次抓取。
-- HTTP 失败直接中止资金流更新，不生成伪成功报告；价格失败或陈旧显示待更新。
-- NYSE 日历考虑周末、节假日、提前收盘和夏令时。最近五交易日是查询时已收盘的五个美国交易日，不是最近五条有值记录；任何一天缺报都不计算净额。刚收盘尚未发布与历史陈旧统一标记 pending_or_stale 并列出缺报日期。
-- 查询时间显示北京时间（含 UTC 偏移），源日期为美国交易日。抓取时间使用 UTC。
-- 旧版历史中的假零和错列无法凭数据库恢复。更新不会删除旧库；源页面覆盖的日期会重抓覆盖，更早历史必须与源核对。累计图表只加总已知值，不能当作完整全历史。
-- 保留 HTML/SVG、SQLite、价格/情绪指标及可选 Playwright 截图。截图失败不会丢失 HTML。
-
-```bash
-python -m unittest -v
-python -m py_compile etf_db.py flow_quality.py
-```
-
-测试采用本地 HTML 和模拟 HTTP，不依赖实时网站，也不会触发截图或写入正式数据库。
-
-真实表结构回归样本采集于北京时间 2026-11-07（UTC 2026-11-06），来源 Farside BTC/ETH 页面；包含分行表头、新增 MSBT/MSSE。DEFI 为旧库兼容字段，源表不提供时不视为必填。已有数据库采用添加列迁移，不删表或删记录。历史上市前的破折号保守视为缺失，因此这些日期可能不计算总额。
+代码采用 [MIT License](LICENSE) © Jackson Fan。代码许可不授予第三方新闻、数据或商标的再分发权。项目不保证数据准确、及时或持续可用；任何金融决策应独立核实。
