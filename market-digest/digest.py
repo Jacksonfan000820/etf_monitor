@@ -150,7 +150,7 @@ def render(report):
         lines.append(f"{asset}: 状态 {data['status']}；最近完整日 {data.get('latest_complete') or '缺失'}；当日 {data.get('latest_total_musd', '缺失')}；5交易日合计 {data.get('five_session_total_musd') if data.get('five_session_total_musd') is not None else '缺失，不计算'}。")
         lines.append(f"预期最近已收盘日 {data.get('expected_session', '无法核实')}；来源 {SOURCES[asset]}")
     lines.append('交易所活动：仅收录配置的官方公告原文证据；不推断有效期、资格或收益。')
-    if not report['announcements']: lines.append('未配置公告链接，未实现全站活动发现。')
+    if not report['announcements']: lines.append('币安 / Bitget / OKX：尚未接入自动活动发现，今天无已核实活动可列出；不代表这些平台没有活动。')
     for a in report['announcements']:
         lines.append(f"{a['status']} | {a.get('title_quote', '无法获取')} | {a['url']}")
         if a.get('description_quote'): lines.append('官方页面摘录：' + a['description_quote'])
@@ -160,9 +160,9 @@ def render(report):
         lines.append(f"数据源 {source['source']}：{source['status']}，条目 {source.get('item_count', '未知')}")
     for item in news['items']:
         lines.append(f"[{item['category']}] {item['title_quote']} | 发布时间 {item['published_at'] or '未知'} | {item['url']}")
-        if item['description_quote']: lines.append('来源摘录：' + item['description_quote'])
+        if item['description_quote']: lines.append('来源摘录：' + item['description_quote'][:220])
     social = report.get('x_posts', {'status': 'not_configured', 'items': []})
-    lines.append(f"X/KOL：{social['status']}；仅支持授权导出导入，未实现自动抓取或智能观点，导入真实性未独立验证。")
+    lines.append(f"马斯克 / X/KOL：{social['status']}；仅支持授权导出导入，未实现自动抓取或智能观点，导入真实性未独立验证。")
     for item in social['items']:
         lines.append(f"{item['author']} | {item['published_at']} | {item['text_quote']} | {item['url']}")
     lines.append('数据缺失不代表资金流为零；非投资建议。')
@@ -183,7 +183,8 @@ def send_feishu(text):
     try:
         with build_opener(NoRedirect).open(Request(webhook, data=payload, headers={'Content-Type':'application/json'}), timeout=25) as response:
             result = json.loads(response.read(65536))
-        if result.get('code', result.get('StatusCode')) != 0: raise RuntimeError()
+        code = result.get('code', result.get('StatusCode'))
+        if type(code) is not int or code != 0: raise RuntimeError()
     except Exception:
         raise RuntimeError('Feishu send failed or uncertain; inspect delivery before retrying') from None
 
@@ -221,3 +222,4 @@ def main():
     if args.send: send_feishu(content)
 
 if __name__ == '__main__': main()
+

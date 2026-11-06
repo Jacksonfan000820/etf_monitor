@@ -1,9 +1,24 @@
 {
   "lookback_hours": 72,
-  "max_items_per_source": 10,
+  "max_items_per_source": 3,
   "feeds": [
-    {"name": "Federal Reserve press releases", "category": "macro", "url": "https://www.federalreserve.gov/feeds/press_all.xml", "enabled": true},
-    {"name": "SEC press releases", "category": "us_stocks", "url": "https://www.sec.gov/news/pressreleases.rss", "enabled": true},
-    {"name": "CoinDesk", "category": "crypto", "url": "https://www.coindesk.com/arc/outboundfeeds/rss/", "enabled": true}
+    {
+      "name": "Federal Reserve press releases",
+      "category": "macro",
+      "url": "https://www.federalreserve.gov/feeds/press_all.xml",
+      "enabled": true
+    },
+    {
+      "name": "SEC press releases",
+      "category": "us_stocks",
+      "url": "https://www.sec.gov/news/pressreleases.rss",
+      "enabled": true
+    },
+    {
+      "name": "CoinDesk",
+      "category": "crypto",
+      "url": "https://www.coindesk.com/arc/outboundfeeds/rss/",
+      "enabled": true
+    }
   ]
 }

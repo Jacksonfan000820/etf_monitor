@@ -1,0 +1,75 @@
+name: Daily market digest
+
+on:
+  schedule:
+    # 09:00 Asia/Shanghai. GitHub may delay scheduled jobs.
+    - cron: '0 1 * * *'
+  workflow_dispatch:
+    inputs:
+      confirm_send:
+        description: 'Send one real digest (check Feishu before requesting an extra send)'
+        type: boolean
+        default: false
+        required: true
+  push:
+    branches: [main]
+    paths: [.github/workflows/market-digest.yml]
+
+permissions:
+  contents: read
+concurrency:
+  group: daily-market-digest
+  cancel-in-progress: false
+
+jobs:
+  daily-digest:
+    if: >-
+      github.run_attempt == 1 &&
+      (github.event_name != 'push' ||
+      (github.run_number == 1 && github.event.head_commit.message == 'Launch authorized daily market digest'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install and verify offline checks
+        run: |
+          python -m pip install -r requirements.txt -r market-digest/requirements.txt
+          python scripts/check.py
+      - name: Collect current sources without sending
+        working-directory: market-digest
+        run: |
+          python digest.py --output out > /dev/null
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          report = json.loads(Path('out/report.json').read_text())
+          print('Generated Beijing:', report['generated_beijing'])
+          for asset, data in report['etf'].items():
+              print(asset, json.dumps(data, ensure_ascii=False))
+          for source in report['news']['sources']:
+              print('Feed:', json.dumps(source, ensure_ascii=False))
+          print('News entries:', len(report['news']['items']))
+          print('X:', report['x_posts']['status'])
+          print('Configured exchange evidence:', len(report['announcements']))
+          size = len(Path('out/report.txt').read_bytes())
+          print('Report UTF-8 bytes:', size)
+          if size > 18000:
+              raise SystemExit('Payload exceeds safety limit; nothing sent')
+          PY
+      - name: Send one authorized digest without retry
+        if: github.event_name != 'workflow_dispatch' || inputs.confirm_send
+        working-directory: market-digest
+        env:
+          FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from digest import send_feishu
+          send_feishu(Path('out/report.txt').read_text(encoding='utf-8'))
+          print('Feishu API accepted one daily digest (code 0); recipient visibility must be checked separately.')
+          PY
